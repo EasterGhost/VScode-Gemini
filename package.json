@@ -3,8 +3,8 @@
   "displayName": "Vscode-Gemini",
   "description": "智能终端问答助手，基于Gemini AI",
   
-  "version": "0.0.2",
-  "publisher": "yefan",
+  "version": "0.0.3",
+  "publisher": "easterghost",
   "engines": {
     "vscode": "^1.102.0"
   },
@@ -54,12 +54,13 @@
         },
         "vscode-gemini.model": {
           "type": "string",
-          "default": "gemini-1.5-flash",
+          "default": "gemini-3.1-pro-preview",
           "description": "使用的Gemini模型",
           "enum": [
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
-            "gemini-pro"
+            "gemini-3.1-pro-preview",
+            "gemini-2.5-pro",
+            "gemini-3-flash-preview",
+            "gemini-3-pro-preview"
           ]
         },
         "vscode-gemini.autoCreateTerminal": {
@@ -72,8 +73,9 @@
     "keybindings": [
       {
         "command": "vscode-gemini.startAIChat",
-        "key": "ctrl+shift+g",
-        "mac": "cmd+shift+g"
+        "key": "ctrl+alt+g",
+        "mac": "cmd+alt+g",
+        "when": "editorTextFocus || terminalFocus"
       },
       {
         "command": "vscode-gemini.analyzeSelectedCode",
@@ -121,6 +123,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/yefan0/VScode-Gemini.git"
+    "url": "https://github.com/EasterGhost/VScode-Gemini.git"
   }
 }

@@ -3,18 +3,31 @@ import * as vscode from 'vscode';
 
 export interface GeminiResponse {
     candidates: Array<{
+        finishReason?: string;
         content: {
             parts: Array<{
                 text: string;
             }>;
         };
     }>;
+    promptFeedback?: {
+        blockReason?: string;
+    };
 }
 
 export class GeminiService {
+    private static readonly DEFAULT_MODEL = 'gemini-3.1-pro-preview';
+    private static readonly FALLBACK_MODELS = [
+        'gemini-2.5-pro',
+        'gemini-3-flash-preview',
+        'gemini-3.1-pro-preview',
+        'gemini-3-pro-preview'
+    ];
+
     private apiKey: string = '';
-    private model: string = 'gemini-1.5-flash';
-    private baseUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
+    private model: string = GeminiService.DEFAULT_MODEL;
+    private readonly baseUrl ='https://generativelanguage.googleapis.com/v1beta/models';
+    private readonly baseUrlV1 = 'https://generativelanguage.googleapis.com/v1/models';
 
     constructor() {
         this.updateConfig();
@@ -23,7 +36,7 @@ export class GeminiService {
     public updateConfig(): void {
         const config = vscode.workspace.getConfiguration('vscode-gemini');
         this.apiKey = config.get<string>('apiKey') || '';
-        this.model = config.get<string>('model') || 'gemini-1.5-flash';
+        this.model = config.get<string>('model') || GeminiService.DEFAULT_MODEL;
     }
 
     public async generateContent(prompt: string): Promise<string> {
@@ -31,8 +44,6 @@ export class GeminiService {
             throw new Error('请先在设置中配置Gemini API Key');
         }
 
-        const url = `${this.baseUrl}/${this.model}:generateContent?key=${this.apiKey}`;
-        
         const requestBody = {
             contents: [
                 {
@@ -50,18 +61,20 @@ export class GeminiService {
         };
 
         try {
-            const response = await axios.post<GeminiResponse>(url, requestBody, {
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                timeout: 30000
-            });
+            const response = await this.requestGenerateContent(requestBody);
 
             if (response.data.candidates && response.data.candidates.length > 0) {
                 const content = response.data.candidates[0].content;
                 if (content.parts && content.parts.length > 0) {
-                    return content.parts[0].text;
+                    const mergedText = content.parts.map(part => part.text || '').join('').trim();
+                    if (mergedText) {
+                        return mergedText;
+                    }
                 }
+            }
+
+            if (response.data.promptFeedback?.blockReason) {
+                throw new Error(`请求被模型安全策略拦截: ${response.data.promptFeedback.blockReason}`);
             }
 
             throw new Error('未收到有效的AI响应');
@@ -78,6 +91,76 @@ export class GeminiService {
             }
             throw error;
         }
+    }
+
+    private async requestGenerateContent(requestBody: unknown) {
+        const tryRequest = (baseUrl: string, model: string) => {
+            const url = `${baseUrl}/${model}:generateContent?key=${this.apiKey}`;
+            return axios.post<GeminiResponse>(url, requestBody, {
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                timeout: 30000
+            });
+        };
+
+        const modelsToTry = [
+            this.model,
+            ...GeminiService.FALLBACK_MODELS.filter(model => model !== this.model)
+        ];
+
+        let lastError: unknown;
+
+        for (const model of modelsToTry) {
+            try {
+                const response = await tryRequest(this.baseUrlV1, model);
+                if (model !== this.model) {
+                    this.model = model;
+                }
+                return response;
+            } catch (errorV1) {
+                if (
+                    axios.isAxiosError(errorV1) &&
+                    (errorV1.response?.status === 404 || errorV1.response?.status === 400)
+                ) {
+                    try {
+                        const response = await tryRequest(this.baseUrl, model);
+                        if (model !== this.model) {
+                            this.model = model;
+                        }
+                        return response;
+                    } catch (errorV1beta) {
+                        lastError = errorV1beta;
+                        if (!this.isModelUnavailableError(errorV1beta)) {
+                            throw errorV1beta;
+                        }
+                        continue;
+                    }
+                }
+
+                lastError = errorV1;
+                if (!this.isModelUnavailableError(errorV1)) {
+                    throw errorV1;
+                }
+            }
+        }
+
+        throw lastError;
+    }
+
+    private isModelUnavailableError(error: unknown): boolean {
+        if (!axios.isAxiosError(error)) {
+            return false;
+        }
+
+        const status = error.response?.status;
+        const message = String(error.response?.data?.error?.message || error.message || '').toLowerCase();
+
+        if (status === 404) {
+            return true;
+        }
+
+        return message.includes('is not found') || message.includes('not supported for generatecontent');
     }
 
     public async askAboutCode(code: string, question: string): Promise<string> {
